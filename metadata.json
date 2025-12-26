@@ -1,4 +1,7 @@
 {
   "name": "IIT Mandi ONE App",
-  "description": "A centralized platform for IIT Mandi campus shops, featuring real-time inventory tracking for retail and appointment booking for services like laundry and salons, all wrapped in a sci-fi inspired interface."
+  "description": "A centralized platform for IIT Mandi campus shops, featuring real-time inventory tracking for retail and appointment booking for services like laundry and salons, all wrapped in a sci-fi inspired interface.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
 }

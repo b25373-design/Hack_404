@@ -1,14 +1,13 @@
-
 import React from 'react';
-import { Shop, ShopCategory } from '../types';
+import { Shop, ShopCategory, AppView } from '../types';
 
 interface SidebarProps {
   shops: Shop[];
   selectedShopId: string | null;
   onSelectShop: (id: string | null) => void;
   hasAppointments?: boolean;
-  view?: 'shops' | 'appointments';
-  onSetView?: (view: 'shops' | 'appointments') => void;
+  view?: AppView;
+  onSetView?: (view: AppView) => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ 
@@ -44,22 +43,22 @@ const Sidebar: React.FC<SidebarProps> = ({
             }}
             className={`w-full p-4 flex items-center gap-4 transition-all duration-300 relative group mb-2 border-b border-cyan-500/10 ${
               view === 'appointments' 
-                ? 'bg-orange-500/20 text-orange-300' 
-                : 'text-slate-500 hover:bg-slate-800/50 hover:text-orange-400'
+                ? 'bg-cyan-500/20 text-cyan-300' 
+                : 'text-slate-500 hover:bg-slate-800/50 hover:text-cyan-400'
             }`}
           >
-            <div className={`absolute left-0 top-0 bottom-0 w-1 bg-orange-400 shadow-[0_0_8px_#fb923c] transition-all duration-300 ${
+            <div className={`absolute left-0 top-0 bottom-0 w-1 bg-cyan-400 shadow-[0_0_8px_#22d3ee] transition-all duration-300 ${
               view === 'appointments' ? 'opacity-100' : 'opacity-0'
             }`}></div>
             
             <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg border transition-all duration-300 ${
-              view === 'appointments' ? 'border-orange-400/50 bg-orange-900/30' : 'border-slate-800 bg-slate-900'
+              view === 'appointments' ? 'border-cyan-400/50 bg-cyan-900/30' : 'border-slate-800 bg-slate-900'
             }`}>
               <i className="fas fa-calendar-check"></i>
             </div>
             <div className="hidden md:block text-left transition-opacity duration-300">
-              <p className="font-bold text-sm">Appointments</p>
-              <p className="text-[10px] uppercase opacity-60">My Portal</p>
+              <p className="font-bold text-sm">Portal</p>
+              <p className="text-[10px] uppercase opacity-60">Status</p>
             </div>
           </button>
         )}
@@ -94,15 +93,11 @@ const Sidebar: React.FC<SidebarProps> = ({
         ))}
       </div>
       
-      {/* Decorative HUD element */}
       <div className="p-4 border-t border-cyan-500/10 bg-cyan-900/5">
         <div className="hidden md:flex flex-col gap-1">
           <div className="flex justify-between items-center text-[8px] text-cyan-700 font-bold uppercase">
-            <span>Link Strength</span>
-            <span>94%</span>
-          </div>
-          <div className="h-1 bg-slate-900 rounded-full overflow-hidden">
-            <div className="h-full bg-cyan-500/50 w-[94%] shadow-[0_0_5px_rgba(34,211,238,0.5)]"></div>
+            <span>Core Link</span>
+            <span>Stable</span>
           </div>
         </div>
       </div>

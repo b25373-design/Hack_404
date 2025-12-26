@@ -1,6 +1,6 @@
 
 export enum UserRole {
-  STUDENT = 'STUDENT',
+  USER = 'USER',
   SELLER = 'SELLER'
 }
 
@@ -57,6 +57,18 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  password?: string; // Stored for diagnostic simulation
   role: UserRole;
   shopId?: string; // For sellers
 }
+
+export interface ActivityLog {
+  id: string;
+  timestamp: string;
+  userId: string;
+  userEmail: string;
+  action: string;
+  metadata: string;
+}
+
+export type AppView = 'shops' | 'appointments';

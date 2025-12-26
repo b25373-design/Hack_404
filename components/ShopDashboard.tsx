@@ -11,12 +11,13 @@ interface ShopDashboardProps {
 const ShopDashboard: React.FC<ShopDashboardProps> = ({ shop, user, onBookAppointment }) => {
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [selectedService, setSelectedService] = useState<ServiceItem | null>(null);
-  const [bookingDate, setBookingDate] = useState('');
+  const [bookingDate, setBookingDate] = useState(new Date().toISOString().split('T')[0]);
   const [bookingTime, setBookingTime] = useState('');
   const [phone, setPhone] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const isRetail = [ShopCategory.STATIONARY, ShopCategory.ELECTRONICS].includes(shop.category);
+  const today = new Date().toISOString().split('T')[0];
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -26,6 +27,11 @@ const ShopDashboard: React.FC<ShopDashboardProps> = ({ shop, user, onBookAppoint
   const handleBook = () => {
     if (!selectedService || !bookingDate || !bookingTime || !phone) {
       alert("Please fill all fields including phone number.");
+      return;
+    }
+
+    if (bookingDate < today) {
+      alert("Cannot book for a past date. Please select today or a future date.");
       return;
     }
     
@@ -141,7 +147,7 @@ const ShopDashboard: React.FC<ShopDashboardProps> = ({ shop, user, onBookAppoint
               </div>
               <div>
                 <label className="text-[10px] font-bold text-cyan-500 uppercase tracking-widest">Select Date</label>
-                <input type="date" value={bookingDate} onChange={(e) => setBookingDate(e.target.value)} className="w-full bg-slate-900 border border-cyan-900 rounded-lg p-3 text-slate-200" />
+                <input type="date" min={today} value={bookingDate} onChange={(e) => setBookingDate(e.target.value)} className="w-full bg-slate-900 border border-cyan-900 rounded-lg p-3 text-slate-200" />
               </div>
               <div>
                 <label className="text-[10px] font-bold text-cyan-500 uppercase tracking-widest">Select Time</label>
