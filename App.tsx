@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User, UserRole, Shop, Appointment, AppView, ActivityLog } from './types';
 import { INITIAL_SHOPS } from './constants';
 import AuthForm from './components/AuthForm';
@@ -8,6 +8,7 @@ import ShopDashboard from './components/ShopDashboard';
 import SellerDashboard from './components/SellerDashboard';
 import Navbar from './components/Navbar';
 import AppointmentsList from './components/AppointmentsList';
+import CampusMap from './components/CampusMap';
 import LiveVoiceAssistant from './components/LiveVoiceAssistant';
 
 interface LogEntry {
@@ -18,6 +19,7 @@ interface LogEntry {
   subject?: string;
   content: string;
   status: 'processing' | 'success' | 'failed';
+  isLive?: boolean;
 }
 
 const App: React.FC = () => {
@@ -33,16 +35,17 @@ const App: React.FC = () => {
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [adminTab, setAdminTab] = useState<'system' | 'registry' | 'activity' | 'replication'>('system');
   const [replicationInput, setReplicationInput] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false);
+  
   const mainContentRef = useRef<HTMLDivElement>(null);
+  const broadcastRef = useRef<BroadcastChannel | null>(null);
 
-  useEffect(() => {
-    const timer = setTimeout(() => setIsLoading(false), 1500);
-    const sessionUser = localStorage.getItem('iit_mandi_active_session');
+  // Load all data from persistent storage
+  const refreshGlobalState = useCallback(() => {
     const storedUsers = localStorage.getItem('IITM_ONE_USER_REGISTRY');
     const storedShops = localStorage.getItem('IITM_ONE_GLOBAL_SHOPS');
     const storedAppointments = localStorage.getItem('IITM_ONE_GLOBAL_APPOINTMENTS');
 
-    if (sessionUser) setUser(JSON.parse(sessionUser));
     if (storedUsers) setAllUsers(JSON.parse(storedUsers));
     
     if (storedShops) {
@@ -55,20 +58,53 @@ const App: React.FC = () => {
     if (storedAppointments) {
       setAppointments(JSON.parse(storedAppointments));
     }
-
-    return () => clearTimeout(timer);
   }, []);
 
-  useEffect(() => {
-    if (allUsers.length > 0) {
-      localStorage.setItem('IITM_ONE_USER_REGISTRY', JSON.stringify(allUsers));
+  // Broadcast any change to other instances
+  const broadcastChange = (type: string, data?: any) => {
+    if (broadcastRef.current) {
+      broadcastRef.current.postMessage({ type, data, timestamp: Date.now() });
     }
-  }, [allUsers]);
+    setIsSyncing(true);
+    setTimeout(() => setIsSyncing(false), 800);
+  };
 
-  const addLog = (type: LogEntry['type'], target: string, content: string, subject?: string) => {
+  useEffect(() => {
+    // Initialize Broadcast Channel for Real-time Sync
+    const channel = new BroadcastChannel('IITM_CORE_LINK');
+    broadcastRef.current = channel;
+
+    channel.onmessage = (event) => {
+      const { type, data } = event.data;
+      console.log(`%c[CORE_SYNC] Received: ${type}`, 'color: #22d3ee; font-weight: bold;');
+      
+      // Update local state based on remote broadcast
+      refreshGlobalState();
+      
+      if (type === 'ACTIVITY_LOG') {
+        addLog('system', 'REMOTE_NODE', `Remote Activity detected: ${data.action}`, undefined, true);
+      }
+      
+      setIsSyncing(true);
+      setTimeout(() => setIsSyncing(false), 800);
+    };
+
+    const timer = setTimeout(() => setIsLoading(false), 1500);
+    const sessionUser = localStorage.getItem('iit_mandi_active_session');
+    
+    if (sessionUser) setUser(JSON.parse(sessionUser));
+    refreshGlobalState();
+
+    return () => {
+      channel.close();
+      clearTimeout(timer);
+    };
+  }, [refreshGlobalState]);
+
+  const addLog = (type: LogEntry['type'], target: string, content: string, subject?: string, isLive: boolean = false) => {
     const id = Math.random().toString(36).substr(2, 9);
     const newLog: LogEntry = {
-      id, timestamp: new Date().toLocaleTimeString(), type, target, subject, content, status: 'processing'
+      id, timestamp: new Date().toLocaleTimeString(), type, target, subject, content, status: 'processing', isLive
     };
     setLogs(prev => [newLog, ...prev].slice(0, 30));
     setTimeout(() => {
@@ -95,7 +131,9 @@ const App: React.FC = () => {
       action: action,
       metadata: metadata
     };
-    localStorage.setItem(tableName, JSON.stringify([newRow, ...activityList].slice(0, 100)));
+    const updated = [newRow, ...activityList].slice(0, 100);
+    localStorage.setItem(tableName, JSON.stringify(updated));
+    broadcastChange('ACTIVITY_LOG', newRow);
   };
 
   const handleLogin = (userData: User) => {
@@ -103,16 +141,24 @@ const App: React.FC = () => {
     if (existingUser && userData.password && existingUser.password !== userData.password) return;
 
     let finalUser = userData;
+    let updatedUsers = [...allUsers];
+
     if (existingUser) {
       finalUser = { ...existingUser, name: userData.name || existingUser.name };
-      setAllUsers(prev => prev.map(u => u.email.toLowerCase() === finalUser.email.toLowerCase() ? finalUser : u));
+      updatedUsers = allUsers.map(u => u.email.toLowerCase() === finalUser.email.toLowerCase() ? finalUser : u);
     } else {
-      setAllUsers(prev => [...prev, userData]);
+      updatedUsers = [...allUsers, userData];
     }
+    
+    setAllUsers(updatedUsers);
+    localStorage.setItem('IITM_ONE_USER_REGISTRY', JSON.stringify(updatedUsers));
     
     setUser(finalUser);
     localStorage.setItem('iit_mandi_active_session', JSON.stringify(finalUser));
+    
     logToSQL('AUTH_SUCCESS', `Role: ${finalUser.role}`, finalUser);
+    broadcastChange('USER_LOGIN', finalUser);
+    
     sendEmailViaResend(finalUser.email, "Identity Handshake - IIT Mandi ONE", `Connection established for ${finalUser.name}. Persistent session active.`);
 
     if (finalUser.role === UserRole.SELLER && finalUser.shopId) {
@@ -122,9 +168,22 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     logToSQL('AUTH_TERMINATE', 'User disconnected.');
+    broadcastChange('USER_LOGOUT', user);
     setUser(null);
     setSelectedShopId(null);
     localStorage.removeItem('iit_mandi_active_session');
+  };
+
+  const handleUpdateShops = (updatedShops: Shop[]) => {
+    setShops(updatedShops);
+    localStorage.setItem('IITM_ONE_GLOBAL_SHOPS', JSON.stringify(updatedShops));
+    broadcastChange('SHOP_UPDATE');
+  };
+
+  const handleUpdateAppointments = (updatedApts: Appointment[]) => {
+    setAppointments(updatedApts);
+    localStorage.setItem('IITM_ONE_GLOBAL_APPOINTMENTS', JSON.stringify(updatedApts));
+    broadcastChange('APPOINTMENT_UPDATE');
   };
 
   const handleAdminActivation = () => {
@@ -139,14 +198,14 @@ const App: React.FC = () => {
       const decodedData = JSON.parse(atob(replicationInput));
       
       if (decodedData.users) {
-        // Merge users based on email uniqueness
-        setAllUsers(prev => {
-          const combined = [...prev, ...decodedData.users];
-          const unique = Array.from(new Map(combined.map(u => [u.email.toLowerCase(), u])).values());
-          return unique;
-        });
+        const combined = [...allUsers, ...decodedData.users];
+        const unique = Array.from(new Map(combined.map(u => [u.email.toLowerCase(), u])).values());
+        
+        setAllUsers(unique);
+        localStorage.setItem('IITM_ONE_USER_REGISTRY', JSON.stringify(unique));
         
         addLog('system', 'CORE_REPLICATION', `Injected ${decodedData.users.length} unique identity signatures.`);
+        broadcastChange('REPLICATION_SYNC');
         setReplicationInput('');
         alert('NEURAL LINK ESTABLISHED: Remote identity data merged into registry.');
       }
@@ -164,7 +223,10 @@ const App: React.FC = () => {
     return (
       <div className="h-screen bg-slate-950 flex flex-col items-center justify-center sci-fi-grid">
         <div className="w-16 h-16 border-t-4 border-cyan-500 rounded-full animate-spin"></div>
-        <p className="mt-8 font-sci-fi text-cyan-400 animate-pulse uppercase tracking-[0.2em] text-sm">Syncing Core Neural Link...</p>
+        <div className="mt-8 flex flex-col items-center">
+          <p className="font-sci-fi text-cyan-400 animate-pulse uppercase tracking-[0.2em] text-sm">Syncing Core Neural Link...</p>
+          <p className="text-[10px] text-slate-500 uppercase mt-2 font-mono">Establishing Real-Time Bridge</p>
+        </div>
       </div>
     );
   }
@@ -173,15 +235,51 @@ const App: React.FC = () => {
 
   const userApts = appointments.filter(a => a.studentId === user.id);
 
+  const renderContent = () => {
+    if (view === 'appointments') return <AppointmentsList appointments={userApts} shops={shops} />;
+    if (view === 'map') return <CampusMap />;
+    if (selectedShopId) {
+      const shop = shops.find(s => s.id === selectedShopId);
+      return shop ? <ShopDashboard shop={shop} user={user} onBookAppointment={(apt) => { handleUpdateAppointments([...appointments, apt]); setView('appointments'); setSelectedShopId(null); logToSQL('SERVICE_INITIATED', apt.serviceName); }} /> : null;
+    }
+
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="glass-card p-8 md:p-12 rounded-3xl max-w-4xl border-cyan-500/30 w-full text-center relative overflow-hidden">
+          <div className="scanner-line !opacity-10"></div>
+          <h2 className="text-3xl md:text-5xl font-sci-fi text-cyan-400 mb-4 neon-text-cyan uppercase">Welcome, {user.name}</h2>
+          <p className="text-sm md:text-lg text-slate-400 mb-8 uppercase tracking-widest opacity-80">Sector Link Established and Secure.</p>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <button onClick={() => setSelectedShopId('shop-1')} className="p-6 border border-cyan-900/50 rounded-2xl bg-cyan-950/20 group hover:border-cyan-500 transition-all">
+              <i className="fas fa-microchip text-cyan-500 text-3xl mb-3 group-hover:scale-110 transition-transform"></i>
+              <h3 className="font-bold text-slate-200 uppercase text-xs">Sector Directory</h3>
+            </button>
+            <button onClick={() => setView('appointments')} className="p-6 border border-cyan-900/50 rounded-2xl bg-cyan-950/20 group hover:border-cyan-500 transition-all">
+              <i className="fas fa-calendar-check text-cyan-500 text-3xl mb-3 group-hover:scale-110 transition-transform"></i>
+              <h3 className="font-bold text-slate-200 uppercase text-xs">Active Portal</h3>
+            </button>
+            <button onClick={() => setView('map')} className="p-6 border border-cyan-900/50 rounded-2xl bg-cyan-950/20 group hover:border-cyan-500 transition-all">
+              <i className="fas fa-map-marked-alt text-cyan-500 text-3xl mb-3 group-hover:scale-110 transition-transform"></i>
+              <h3 className="font-bold text-slate-200 uppercase text-xs">Campus Map</h3>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="h-screen bg-slate-950 sci-fi-grid flex flex-col relative overflow-hidden">
-      {/* COMMUNICATION & MASTER HUB */}
       <div className={`fixed inset-y-0 right-0 z-[100] w-full md:w-[480px] bg-slate-950 border-l border-cyan-500/30 transform transition-transform duration-500 ${showTerminal ? 'translate-x-0 shadow-[0_0_100px_rgba(0,0,0,0.9)]' : 'translate-x-full shadow-none'}`}>
         <div className="h-full flex flex-col font-mono text-[10px] p-6 pt-12 md:pt-6">
           <div className="flex justify-between items-center mb-6 border-b border-cyan-500/20 pb-4">
-            <span className="text-cyan-400 font-sci-fi text-sm uppercase tracking-widest neon-text-cyan">
-              {isAdminMode ? 'Master_Database_Explorer' : 'Comm_Hub_Link'}
-            </span>
+            <div className="flex flex-col">
+              <span className="text-cyan-400 font-sci-fi text-sm uppercase tracking-widest neon-text-cyan">
+                {isAdminMode ? 'Master_Database_Explorer' : 'Comm_Hub_Link'}
+              </span>
+              <span className="text-[7px] text-cyan-700 font-bold uppercase tracking-tighter">Real-time Node: {window.location.origin}</span>
+            </div>
             <button onClick={() => setShowTerminal(false)} className="text-cyan-500 hover:text-white transition-colors">
               <i className="fas fa-times text-lg"></i>
             </button>
@@ -202,9 +300,15 @@ const App: React.FC = () => {
             {adminTab === 'system' ? (
               logs.length > 0 ? (
                 logs.map(log => (
-                  <div key={log.id} className="p-3 rounded-lg border border-cyan-900 bg-cyan-950/5 mb-2 relative group overflow-hidden">
+                  <div key={log.id} className={`p-3 rounded-lg border bg-cyan-950/5 mb-2 relative group overflow-hidden transition-colors ${log.isLive ? 'border-cyan-400/50 bg-cyan-500/5' : 'border-cyan-900'}`}>
                     <div className="scanner-line !h-[1px] opacity-20 group-hover:opacity-60"></div>
-                    <div className="flex justify-between mb-1 text-slate-500 text-[8px]"><span>[{log.type}]</span><span>{log.timestamp}</span></div>
+                    <div className="flex justify-between mb-1 text-slate-500 text-[8px]">
+                      <span className="flex items-center gap-1">
+                        [{log.type}] 
+                        {log.isLive && <span className="text-[6px] bg-cyan-500 text-white px-1 rounded animate-pulse">LIVE</span>}
+                      </span>
+                      <span>{log.timestamp}</span>
+                    </div>
                     <p className="text-cyan-300 font-bold uppercase truncate">TARGET: {log.target}</p>
                     <p className="text-slate-400 uppercase leading-tight">{log.content}</p>
                   </div>
@@ -214,7 +318,10 @@ const App: React.FC = () => {
               )
             ) : adminTab === 'registry' ? (
               <div className="space-y-2">
-                 <div className="p-2 mb-2 bg-cyan-950/20 text-cyan-500 font-bold uppercase border-b border-cyan-500/30">CORE_IDENTITY_SQL (REAL-TIME)</div>
+                 <div className="p-2 mb-2 bg-cyan-950/20 text-cyan-500 font-bold uppercase border-b border-cyan-500/30 flex justify-between items-center">
+                   <span>CORE_IDENTITY_SQL (LIVE)</span>
+                   <div className="w-2 h-2 bg-cyan-400 rounded-full animate-pulse"></div>
+                 </div>
                  {allUsers.length === 0 ? (
                    <p className="text-slate-600 text-center py-10 uppercase tracking-widest text-[8px]">Registry Empty</p>
                  ) : (
@@ -237,7 +344,8 @@ const App: React.FC = () => {
               <div className="space-y-2">
                 <div className="p-2 mb-2 bg-cyan-950/20 text-cyan-500 font-bold uppercase border-b border-cyan-500/30">GLOBAL_ACTIVITY_LOG</div>
                 {getGlobalActivity().map((row: any) => (
-                  <div key={row.id} className="p-3 bg-slate-900 border border-cyan-900/20 rounded text-[9px]">
+                  <div key={row.id} className="p-3 bg-slate-900 border border-cyan-900/20 rounded text-[9px] relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 w-1 h-full bg-cyan-500 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                     <div className="flex justify-between font-bold text-cyan-600 mb-1"><span>{row.userEmail}</span><span>{new Date(row.timestamp).toLocaleTimeString()}</span></div>
                     <div className="text-cyan-400 uppercase font-bold">{row.action}</div>
                     <div className="text-slate-500 italic uppercase truncate">{row.metadata}</div>
@@ -288,6 +396,7 @@ const App: React.FC = () => {
         onAdminTrigger={handleAdminActivation}
         onToggleTerminal={() => setShowTerminal(!showTerminal)}
         unreadCount={logs.length}
+        isSyncing={isSyncing}
       />
       
       <div className="flex flex-1 overflow-hidden relative">
@@ -298,31 +407,14 @@ const App: React.FC = () => {
             <Sidebar shops={shops} selectedShopId={selectedShopId} onSelectShop={(id) => { setSelectedShopId(id); setView('shops'); }} hasAppointments={userApts.length > 0} view={view} onSetView={(v) => setView(v as AppView)} />
             <main ref={mainContentRef} className="flex-1 overflow-y-auto p-4 md:p-8 custom-scrollbar">
               <div key={view + (selectedShopId || 'root')} className="view-enter h-full">
-                {view === 'appointments' ? <AppointmentsList appointments={userApts} shops={shops} /> : selectedShopId ? <ShopDashboard shop={shops.find(s => s.id === selectedShopId)!} user={user} onBookAppointment={(apt) => { setAppointments(prev => [...prev, apt]); setView('appointments'); setSelectedShopId(null); logToSQL('SERVICE_INITIATED', apt.serviceName); }} /> : (
-                  <div className="h-full flex items-center justify-center">
-                    <div className="glass-card p-12 rounded-3xl max-w-2xl border-cyan-500/30 w-full text-center relative">
-                      <h2 className="text-4xl font-sci-fi text-cyan-400 mb-4 neon-text-cyan uppercase">Welcome, {user.name}</h2>
-                      <p className="text-lg text-slate-400 mb-8 uppercase tracking-widest opacity-80">Link status: Persistent and Secure.</p>
-                      <div className="grid grid-cols-2 gap-4">
-                        <button onClick={() => setSelectedShopId('shop-1')} className="p-6 border border-cyan-900/50 rounded-2xl bg-cyan-950/20 group hover:border-cyan-500 transition-all">
-                          <i className="fas fa-microchip text-cyan-500 text-3xl mb-3"></i>
-                          <h3 className="font-bold text-slate-200 uppercase text-sm">Sector Directory</h3>
-                        </button>
-                        <button onClick={() => setView('appointments')} className="p-6 border border-cyan-900/50 rounded-2xl bg-cyan-950/20 group hover:border-cyan-500 transition-all">
-                          <i className="fas fa-calendar-check text-cyan-500 text-3xl mb-3"></i>
-                          <h3 className="font-bold text-slate-200 uppercase text-sm">Active Portal</h3>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {renderContent()}
               </div>
             </main>
-            <LiveVoiceAssistant user={user} shops={shops} onBookAppointment={(apt) => { setAppointments(prev => [...prev, apt]); setView('appointments'); setSelectedShopId(null); }} onNavigate={(id) => { setSelectedShopId(id); setView('shops'); }} />
+            <LiveVoiceAssistant user={user} shops={shops} onBookAppointment={(apt) => { handleUpdateAppointments([...appointments, apt]); setView('appointments'); setSelectedShopId(null); }} onNavigate={(id) => { setSelectedShopId(id); setView('shops'); }} />
           </>
         ) : (
           <main className="flex-1 overflow-y-auto p-4 md:p-8 custom-scrollbar">
-            <SellerDashboard user={user} shops={shops} appointments={appointments} onUpdateShops={setShops} onUpdateAppointments={setAppointments} />
+            <SellerDashboard user={user} shops={shops} appointments={appointments} onUpdateShops={handleUpdateShops} onUpdateAppointments={handleUpdateAppointments} />
           </main>
         )}
       </div>

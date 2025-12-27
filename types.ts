@@ -71,4 +71,4 @@ export interface ActivityLog {
   metadata: string;
 }
 
-export type AppView = 'shops' | 'appointments';
+export type AppView = 'shops' | 'appointments' | 'map';

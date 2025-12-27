@@ -91,7 +91,7 @@ const LiveVoiceAssistant: React.FC<LiveVoiceAssistantProps> = ({ user, shops, on
     }
 
     if (fc.name === 'go_to_sleep') {
-      setTimeout(() => stopLive(), 2000); // Give it time to speak the farewell
+      setTimeout(() => stopLive(), 2000); 
       return { result: 'Core shutting down. Moving to standby.' };
     }
 
@@ -149,17 +149,32 @@ const LiveVoiceAssistant: React.FC<LiveVoiceAssistantProps> = ({ user, shops, on
     setIsConnecting(false);
     setIsSpeaking(false);
     sessionRef.current = null;
+    nextStartTimeRef.current = 0;
   };
 
   const initializePrime = async () => {
     if (isConnecting || isInitialized) return;
+    
+    // Safety check for API Key
+    if (!process.env.API_KEY) {
+      console.error('Core Logic Fault: Neural key missing from environment.');
+      setHasError(true);
+      return;
+    }
+
     setIsConnecting(true);
     setHasError(false);
     
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      
+      // Initialize Audio Contexts
       audioContextInRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       audioContextOutRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+
+      // Resume contexts immediately to satisfy browser requirements
+      await audioContextInRef.current.resume();
+      await audioContextOutRef.current.resume();
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -175,11 +190,6 @@ const LiveVoiceAssistant: React.FC<LiveVoiceAssistantProps> = ({ user, shops, on
           WAKE WORD PROTOCOL: You MUST remain absolutely silent and not respond unless you hear the wake word "PRIME".
           When you hear "PRIME", activate your persona. If the user asks to check items, book services, or navigate the dashboard, use your tools immediately.
           Current shops: ${shops.map(s => s.name).join(', ')}.
-          CAPABILITIES:
-          1. Check item availability.
-          2. Book appointments.
-          3. Navigate: You can change the view on the screen to a specific shop if requested (e.g., "Prime, show me the stationary shop").
-          4. Sleep: If the user says "sleep", "goodbye", or "deactivate", use the go_to_sleep tool.
           Today is ${new Date().toISOString().split('T')[0]}. 
           Be highly efficient, futuristic, and brief. Once a task is done, return to passive listening mode.`,
           tools: [{
@@ -202,26 +212,26 @@ const LiveVoiceAssistant: React.FC<LiveVoiceAssistantProps> = ({ user, shops, on
                 parameters: {
                   type: Type.OBJECT,
                   properties: {
-                    shopName: { type: Type.STRING, description: 'Name of the shop to open, or "home" for dashboard.' },
+                    shopName: { type: Type.STRING },
                   },
                   required: ['shopName'],
                 },
               },
               {
                 name: 'go_to_sleep',
-                description: 'Shut down the neural link and go into standby mode.',
+                description: 'Shut down the neural link.',
                 parameters: { type: Type.OBJECT, properties: {} },
               },
               {
                 name: 'book_appointment',
-                description: 'Record a service booking in the ledger.',
+                description: 'Record a service booking.',
                 parameters: {
                   type: Type.OBJECT,
                   properties: {
                     shopName: { type: Type.STRING },
                     serviceName: { type: Type.STRING },
-                    date: { type: Type.STRING, description: 'YYYY-MM-DD (Must be today or future)' },
-                    time: { type: Type.STRING, description: 'HH:MM' },
+                    date: { type: Type.STRING },
+                    time: { type: Type.STRING },
                     phone: { type: Type.STRING },
                   },
                   required: ['shopName', 'serviceName', 'date', 'time', 'phone'],
@@ -244,7 +254,7 @@ const LiveVoiceAssistant: React.FC<LiveVoiceAssistantProps> = ({ user, shops, on
                 try {
                   session.sendRealtimeInput({ media: pcmBlob });
                 } catch (err) { }
-              });
+              }).catch(() => {});
             };
             source.connect(scriptProcessor);
             scriptProcessor.connect(audioContextInRef.current.destination);
@@ -255,6 +265,7 @@ const LiveVoiceAssistant: React.FC<LiveVoiceAssistantProps> = ({ user, shops, on
               const base64Data = message.serverContent.modelTurn.parts[0].inlineData.data;
               const ctx = audioContextOutRef.current;
               if (!ctx) return;
+              
               nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
               const buffer = await decodeAudioData(decode(base64Data), ctx, 24000, 1);
               const source = ctx.createBufferSource();
@@ -274,7 +285,7 @@ const LiveVoiceAssistant: React.FC<LiveVoiceAssistantProps> = ({ user, shops, on
                 const result = handleToolCall(fc);
                 sessionPromise.then((session) => session.sendToolResponse({
                   functionResponses: { id: fc.id, name: fc.name, response: result }
-                }));
+                })).catch(() => {});
               }
             }
 
@@ -286,9 +297,7 @@ const LiveVoiceAssistant: React.FC<LiveVoiceAssistantProps> = ({ user, shops, on
             }
           },
           onerror: (e) => {
-            // Check if error is actual network failure or just session termination
-            console.error('Prime Core Interface Alert:', e);
-            if (!isInitialized && !isConnecting) return; // Ignore if intentional
+            console.error('PRIME Neural Error:', e);
             setHasError(true);
             stopLive();
           },
@@ -301,9 +310,9 @@ const LiveVoiceAssistant: React.FC<LiveVoiceAssistantProps> = ({ user, shops, on
 
       sessionRef.current = sessionPromise;
     } catch (err) {
-      console.error('Link Failed:', err);
-      setIsConnecting(false);
+      console.error('Handshake Rejected:', err);
       setHasError(true);
+      setIsConnecting(false);
       stopLive();
     }
   };
@@ -316,35 +325,21 @@ const LiveVoiceAssistant: React.FC<LiveVoiceAssistantProps> = ({ user, shops, on
     }
   };
 
-  useEffect(() => {
-    const triggerAutoInit = () => {
-      initializePrime();
-      window.removeEventListener('click', triggerAutoInit);
-      window.removeEventListener('touchstart', triggerAutoInit);
-    };
-    window.addEventListener('click', triggerAutoInit);
-    window.addEventListener('touchstart', triggerAutoInit);
-    return () => {
-      window.removeEventListener('click', triggerAutoInit);
-      window.removeEventListener('touchstart', triggerAutoInit);
-    };
-  }, []);
-
   return (
     <div className="fixed bottom-28 right-4 z-[120] flex flex-col items-center">
       <style>{`
         @keyframes orb-pulse {
           0% { box-shadow: 0 0 5px rgba(6, 182, 212, 0.4); }
-          50% { box-shadow: 0 0 15px rgba(6, 182, 212, 0.6); }
+          50% { box-shadow: 0 0 20px rgba(6, 182, 212, 0.7); }
           100% { box-shadow: 0 0 5px rgba(6, 182, 212, 0.4); }
         }
         @keyframes neural-waves {
           0% { transform: scale(1); opacity: 0.6; }
-          100% { transform: scale(1.4); opacity: 0; }
+          100% { transform: scale(1.6); opacity: 0; }
         }
         .prime-orb-small {
-          width: 44px;
-          height: 44px;
+          width: 48px;
+          height: 48px;
           border-radius: 50%;
           background: radial-gradient(circle at 30% 30%, #22d3ee, #0891b2, #0e7490);
           display: flex;
@@ -353,26 +348,31 @@ const LiveVoiceAssistant: React.FC<LiveVoiceAssistantProps> = ({ user, shops, on
           position: relative;
           cursor: pointer;
           transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-          border: 1.5px solid rgba(34, 211, 238, 0.3);
+          border: 2px solid rgba(34, 211, 238, 0.4);
         }
         .prime-orb-small.active {
-          animation: orb-pulse 1.5s infinite ease-in-out;
+          animation: orb-pulse 2s infinite ease-in-out;
         }
         .prime-orb-small.off {
           background: radial-gradient(circle at 30% 30%, #334155, #1e293b, #0f172a);
-          border-color: rgba(71, 85, 105, 0.4);
+          border-color: rgba(71, 85, 105, 0.5);
+        }
+        .prime-orb-small.error {
+          background: radial-gradient(circle at 30% 30%, #ef4444, #b91c1c, #7f1d1d);
+          border-color: rgba(239, 68, 68, 0.5);
+          box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
         }
         .wave-small {
           position: absolute;
-          inset: -1px;
-          border: 1.5px solid #22d3ee;
+          inset: -2px;
+          border: 2px solid #22d3ee;
           border-radius: 50%;
-          animation: neural-waves 1.5s infinite linear;
+          animation: neural-waves 2s infinite linear;
           pointer-events: none;
         }
-        .wave-2-small { animation-delay: 0.5s; }
+        .wave-2-small { animation-delay: 0.7s; }
         .sync-rotate {
-          animation: spin 1s linear infinite;
+          animation: spin 1.2s linear infinite;
         }
         @keyframes spin {
           from { transform: rotate(0deg); }
@@ -386,32 +386,30 @@ const LiveVoiceAssistant: React.FC<LiveVoiceAssistantProps> = ({ user, shops, on
             <button 
               onClick={togglePrime}
               className={`prime-orb-small active group ${isSpeaking ? 'scale-110' : ''}`}
-              title="Click to Deactivate Prime"
             >
                <div className="wave-small"></div>
                {isSpeaking && <div className="wave-small wave-2-small"></div>}
                <div className="relative z-10">
-                  <i className={`fas ${isSpeaking ? 'fa-volume-up' : 'fa-microphone'} text-white text-xs ${!isSpeaking ? 'animate-pulse' : ''} group-hover:scale-125 transition-transform`}></i>
+                  <i className={`fas ${isSpeaking ? 'fa-volume-up' : 'fa-microphone'} text-white text-sm ${!isSpeaking ? 'animate-pulse' : ''}`}></i>
                </div>
             </button>
-            <span className="text-[7px] font-bold text-cyan-500 uppercase tracking-[0.3em] mt-1.5 opacity-80">Prime Active</span>
+            <span className="text-[8px] font-bold text-cyan-500 uppercase tracking-[0.3em] mt-2 opacity-80">Link Active</span>
           </div>
         ) : (
-          <div className="flex flex-col items-center opacity-60 hover:opacity-100 transition-opacity">
+          <div className="flex flex-col items-center opacity-70 hover:opacity-100 transition-opacity">
             <button 
               onClick={togglePrime}
-              className={`prime-orb-small off ${hasError ? 'border-red-500' : ''}`}
-              title={hasError ? "Interface Alert. Click to reconnect." : "Establish Neural Link"}
+              className={`prime-orb-small ${isConnecting ? 'active' : 'off'} ${hasError ? 'error' : ''} group`}
             >
                {isConnecting ? (
-                  <i className="fas fa-sync-alt sync-rotate text-cyan-400 text-xs"></i>
+                  <i className="fas fa-sync-alt sync-rotate text-cyan-400 text-sm"></i>
                ) : hasError ? (
-                  <i className="fas fa-exclamation-triangle text-red-600 text-xs"></i>
+                  <i className="fas fa-bolt text-white text-sm"></i>
                ) : (
-                  <i className="fas fa-power-off text-slate-500 text-xs group-hover:text-cyan-400"></i>
+                  <i className="fas fa-power-off text-slate-500 text-sm group-hover:text-cyan-400"></i>
                )}
             </button>
-            <span className={`text-[7px] font-bold uppercase tracking-[0.3em] mt-1.5 ${hasError ? 'text-red-500' : 'text-slate-600'}`}>
+            <span className={`text-[8px] font-bold uppercase tracking-[0.3em] mt-2 ${hasError ? 'text-red-500' : 'text-slate-600'}`}>
               {isConnecting ? 'Syncing...' : hasError ? 'Reconnect' : 'Standby'}
             </span>
           </div>

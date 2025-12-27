@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Shop, ShopCategory, AppView } from '../types';
 
@@ -35,32 +36,62 @@ const Sidebar: React.FC<SidebarProps> = ({
       </div>
       
       <div className="flex-1 overflow-y-auto py-2 custom-scrollbar scroll-smooth">
-        {hasAppointments && onSetView && (
-          <button
-            onClick={() => {
-              onSetView('appointments');
-              onSelectShop(null);
-            }}
-            className={`w-full p-4 flex items-center gap-4 transition-all duration-300 relative group mb-2 border-b border-cyan-500/10 ${
-              view === 'appointments' 
-                ? 'bg-cyan-500/20 text-cyan-300' 
-                : 'text-slate-500 hover:bg-slate-800/50 hover:text-cyan-400'
-            }`}
-          >
-            <div className={`absolute left-0 top-0 bottom-0 w-1 bg-cyan-400 shadow-[0_0_8px_#22d3ee] transition-all duration-300 ${
-              view === 'appointments' ? 'opacity-100' : 'opacity-0'
-            }`}></div>
-            
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg border transition-all duration-300 ${
-              view === 'appointments' ? 'border-cyan-400/50 bg-cyan-900/30' : 'border-slate-800 bg-slate-900'
-            }`}>
-              <i className="fas fa-calendar-check"></i>
-            </div>
-            <div className="hidden md:block text-left transition-opacity duration-300">
-              <p className="font-bold text-sm">Portal</p>
-              <p className="text-[10px] uppercase opacity-60">Status</p>
-            </div>
-          </button>
+        {onSetView && (
+          <>
+            <button
+              onClick={() => {
+                onSetView('map');
+                onSelectShop(null);
+              }}
+              className={`w-full p-4 flex items-center gap-4 transition-all duration-300 relative group mb-1 ${
+                view === 'map' 
+                  ? 'bg-cyan-500/20 text-cyan-300' 
+                  : 'text-slate-500 hover:bg-slate-800/50 hover:text-cyan-400'
+              }`}
+            >
+              <div className={`absolute left-0 top-0 bottom-0 w-1 bg-cyan-400 shadow-[0_0_8px_#22d3ee] transition-all duration-300 ${
+                view === 'map' ? 'opacity-100' : 'opacity-0'
+              }`}></div>
+              
+              <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg border transition-all duration-300 ${
+                view === 'map' ? 'border-cyan-400/50 bg-cyan-900/30' : 'border-slate-800 bg-slate-900'
+              }`}>
+                <i className="fas fa-map-marked-alt"></i>
+              </div>
+              <div className="hidden md:block text-left transition-opacity duration-300">
+                <p className="font-bold text-sm">Campus Map</p>
+                <p className="text-[10px] uppercase opacity-60">Navigation</p>
+              </div>
+            </button>
+
+            {hasAppointments && (
+              <button
+                onClick={() => {
+                  onSetView('appointments');
+                  onSelectShop(null);
+                }}
+                className={`w-full p-4 flex items-center gap-4 transition-all duration-300 relative group mb-2 border-b border-cyan-500/10 ${
+                  view === 'appointments' 
+                    ? 'bg-cyan-500/20 text-cyan-300' 
+                    : 'text-slate-500 hover:bg-slate-800/50 hover:text-cyan-400'
+                }`}
+              >
+                <div className={`absolute left-0 top-0 bottom-0 w-1 bg-cyan-400 shadow-[0_0_8px_#22d3ee] transition-all duration-300 ${
+                  view === 'appointments' ? 'opacity-100' : 'opacity-0'
+                }`}></div>
+                
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg border transition-all duration-300 ${
+                  view === 'appointments' ? 'border-cyan-400/50 bg-cyan-900/30' : 'border-slate-800 bg-slate-900'
+                }`}>
+                  <i className="fas fa-calendar-check"></i>
+                </div>
+                <div className="hidden md:block text-left transition-opacity duration-300">
+                  <p className="font-bold text-sm">Portal</p>
+                  <p className="text-[10px] uppercase opacity-60">Status</p>
+                </div>
+              </button>
+            )}
+          </>
         )}
 
         {shops.map(shop => (
